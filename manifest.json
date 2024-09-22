@@ -1,0 +1,20 @@
+{
+    "manifest_version": 3,
+    "name": "OCR Browser Extension",
+    "version": "1.0",
+    "description": "Capture a selected area of the browser tab, perform OCR, and copy the text.",
+    "permissions": ["activeTab", "scripting", "tabs", "clipboardWrite"],
+    "action": {
+      "default_popup": "popup.html"
+    },
+    "background": {
+      "service_worker": "background.js"
+    },
+    "content_scripts": [
+      {
+        "matches": ["<all_urls>"],
+        "js": ["content.js"]
+      }
+    ]
+  }
+  

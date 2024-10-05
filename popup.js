@@ -1,102 +1,107 @@
+let canvas = document.getElementById('screenshot-canvas');
+let ctx = canvas.getContext('2d');
+let startX, startY, endX, endY, isSelecting = false;
+let img;  // Store the original image to redraw it
+let scale = 1; // Scale factor for the image
+
+// Capture button event
 document.getElementById('capture-btn').addEventListener('click', () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs[0];
-      const url = activeTab.url;
-  
-      // Check if the URL is a chrome:// or about:// page
-      if (url.startsWith('chrome://') || url.startsWith('about://') || url.startsWith('file://')) {
-        alert('Cannot perform OCR on this type of page.');
-        return;
-      }
-  
-      // Inject the createCropOverlay function directly into the page
-      chrome.scripting.executeScript({
-        target: { tabId: activeTab.id },
-        func: createCropOverlay, // Inject the overlay function
-      });
-    });
+  chrome.tabs.captureVisibleTab(null, { format: 'png' }, (imageUri) => {
+    img = new Image();  // Create a new image
+    img.src = imageUri; // Set the source to the captured image
+
+    img.onload = () => {
+      // Set canvas dimensions to match the original image
+      canvas.width = img.width;
+      canvas.height = img.height;
+
+      // Clear the canvas and draw the image
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);  // Draw the image on the canvas
+
+      // Show the canvas and OCR button
+      canvas.style.display = 'block'; 
+      document.getElementById('ocr-btn').style.display = 'inline'; 
+
+      // Setup mouse events for cropping
+      setupCropping();
+    };
   });
-  
-  // This is the function to be injected
-  function createCropOverlay() {
-    const overlay = document.createElement('div');
-    overlay.style.position = 'absolute';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.background = 'rgba(0, 0, 0, 0.5)';
-    overlay.style.zIndex = '9999';
-    overlay.style.cursor = 'crosshair';
-    document.body.appendChild(overlay);
-  
-    let startX, startY, cropArea;
-  
-    overlay.addEventListener('mousedown', (e) => {
-      startX = e.clientX;
-      startY = e.clientY;
-  
-      cropArea = document.createElement('div');
-      cropArea.style.position = 'absolute';
-      cropArea.style.border = '2px dashed #FFF';
-      cropArea.style.zIndex = '10000';
-      document.body.appendChild(cropArea);
-    });
-  
-    document.addEventListener('mousemove', (e) => {
-      if (cropArea) {
-        const width = e.clientX - startX;
-        const height = e.clientY - startY;
-        cropArea.style.left = `${startX}px`;
-        cropArea.style.top = `${startY}px`;
-        cropArea.style.width = `${width}px`;
-        cropArea.style.height = `${height}px`;
-      }
-    });
-  
-    document.addEventListener('mouseup', (e) => {
-      if (cropArea) {
-        const endX = e.clientX;
-        const endY = e.clientY;
-        overlay.remove();
-        cropArea.remove();
-        console.log(`Selected region: StartX=${startX}, StartY=${startY}, Width=${endX - startX}, Height=${endY - startY}`);
-        extractSelectedRegion(startX, startY, endX - startX, endY - startY);
-      }
-    });
-  
-    function extractSelectedRegion(x, y, width, height) {
-      chrome.tabs.captureVisibleTab(null, { format: 'png' }, (imageUri) => {
-        if (!imageUri) {
-          console.error('Failed to capture tab.');
-          return;
-        }
-  
-        const img = new Image();
-        img.src = imageUri;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          canvas.width = width;
-          canvas.height = height;
-          ctx.drawImage(img, x, y, width, height, 0, 0, width, height);
-          const croppedImage = canvas.toDataURL('image/png');
-          performOCR(croppedImage);
-        };
-      });
+});
+
+// Setup cropping functionality
+function setupCropping() {
+  canvas.addEventListener('mousedown', (e) => {
+    startX = e.offsetX;
+    startY = e.offsetY;
+    isSelecting = true;
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (isSelecting) {
+      endX = e.offsetX;
+      endY = e.offsetY;
+      drawSelection(); // Redraw selection rectangle
     }
-  
-    function performOCR(imageUri) {
-      Tesseract.recognize(imageUri, 'eng')
-        .then(result => {
-          const text = result.data.text;
-          console.log("OCR Result:", text);
-          navigator.clipboard.writeText(text);
-          alert("OCR Text copied: " + text);
-        })
-        .catch(error => {
-          console.error('OCR failed: ', error);
-        });
-    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    isSelecting = false;
+    performOCR(); // Perform OCR when the user releases the mouse
+  });
+}
+
+// Draw the selection rectangle on the canvas
+function drawSelection() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
+  ctx.drawImage(img, 0, 0); // Redraw the original image
+  ctx.strokeStyle = 'red';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(startX, startY, endX - startX, endY - startY); // Draw selection rectangle
+}
+
+// Perform OCR on the selected portion
+function performOCR() {
+  const width = endX - startX;
+  const height = endY - startY;
+
+  // Validate the selection
+  if (width <= 0 || height <= 0) {
+    alert('Please select a valid region.');
+    return;
   }
-  
+
+  const imageData = ctx.getImageData(startX, startY, width, height);
+  const croppedCanvas = document.createElement('canvas');
+  croppedCanvas.width = width;
+  croppedCanvas.height = height;
+  const croppedCtx = croppedCanvas.getContext('2d');
+  croppedCtx.putImageData(imageData, 0, 0);
+
+  // Convert to Data URL
+  const croppedImageUri = croppedCanvas.toDataURL('image/png');
+
+  // Log the Data URL for debugging
+  console.log("Sending image data to OCR:", croppedImageUri);
+
+  // Send the cropped image to the backend for OCR
+  fetch('http://192.168.1.81:5001/perform_ocr', { // Update with the correct IP
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ image_path: croppedImageUri })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.extracted_text) {
+      document.getElementById('result').innerText = data.extracted_text; // Display the extracted text
+    } else {
+      alert('Error performing OCR: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(err => {
+    console.error('Error:', err);
+    alert('Failed to perform OCR');
+  });
+}
